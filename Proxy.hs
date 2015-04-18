@@ -20,19 +20,19 @@ echo = AwaitUpstream (\(Same a f) -> RespondUpstream (f a) echo)
 (>->) (AwaitUpstream f) (AwaitUpstream g) = AwaitUpstream $ \h ->
   case f h of
     RespondUpstream   r  next -> RespondUpstream r (next >-> AwaitUpstream g)
-    RequestDownstream dfact   -> sendDownstream dfact (AwaitUpstream g)
+    RequestDownstream dfact   -> activateDowner dfact (AwaitUpstream g)
   
-activateUpstream :: Functor h => Active f g r -> AwaitUpstream g h (Active f g r) -> Active f h r
-activateUpstream f g = case f of
+activateUpper :: Functor h => Active f g r -> AwaitUpstream g h (Active f g r) -> Active f h r
+activateUpper f g = case f of
   RespondUpstream r await -> RespondUpstream r (await >-> g)
-  RequestDownstream fact  -> sendDownstream fact g
+  RequestDownstream fact  -> activateDowner fact g
 
-sendDownstream :: Functor h => g (Active f g r) -> AwaitUpstream g h (Active f g r) -> Active f h r
-sendDownstream f (AwaitUpstream g) = case g f of
-  RespondUpstream r await -> activateUpstream r await
-  RequestDownstream hact -> activateDownstream hact
+activateDowner :: Functor h => g (Active f g r) -> AwaitUpstream g h (Active f g r) -> Active f h r
+activateDowner f (AwaitUpstream g) = case g f of
+  RespondUpstream r await -> activateUpper r await
+  RequestDownstream hact -> sendDownstream hact
 
-activateDownstream :: Functor h => h (Active g h (Active f g r)) -> Active f h r
-activateDownstream h = RequestDownstream $ flip fmap h $ \case
-  RespondUpstream r await  -> activateUpstream r await
-  RequestDownstream dfact -> activateDownstream dfact
+sendDownstream :: Functor h => h (Active g h (Active f g r)) -> Active f h r
+sendDownstream h = RequestDownstream $ flip fmap h $ \case
+  RespondUpstream r await  -> activateUpper r await
+  RequestDownstream dfact -> sendDownstream dfact
