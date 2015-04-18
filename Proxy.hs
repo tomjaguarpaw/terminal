@@ -2,48 +2,57 @@
 
 module Proxy where
 
-data Active uf df r = RespondUpstream   r (AwaitUpstream uf df r)
-                    | RequestDownstream (df (Active uf df r))
+data Active uf df m r = RespondUpstream   r (AwaitUpstream uf df m r)
+                      | RequestDownstream (df (m (Active uf df m r)))
 
-data AwaitUpstream uf df r = AwaitUpstream (uf r -> Active uf df r)
+data AwaitUpstream uf df m r = AwaitUpstream (uf r -> m (Active uf df m r))
 
-identity :: Functor f => AwaitUpstream f f r
-identity = AwaitUpstream (\f -> RequestDownstream
-                                (fmap (\r -> RespondUpstream r identity) f))
+identity :: (Monad m, Functor f) => AwaitUpstream f f m r
+identity = AwaitUpstream (\f -> return (RequestDownstream
+                                (fmap (\r -> return (RespondUpstream r identity)) f)))
 
 data Socket a b r = Same a (b -> r)
 
-echo :: AwaitUpstream (Socket a a) f r
-echo = AwaitUpstream (\(Same a f) -> RespondUpstream (f a) echo)
+echo :: Monad m => AwaitUpstream (Socket a a) f m r
+echo = AwaitUpstream (\(Same a f) -> return (RespondUpstream (f a) echo))
 
-(>->) :: Functor h =>
-         AwaitUpstream f g r
-      -> AwaitUpstream g h (Active f g r)
-      -> AwaitUpstream f h r
-(>->) (AwaitUpstream f) (AwaitUpstream g) = AwaitUpstream $ \h ->
-  case f h of
-    RespondUpstream   r  next -> RespondUpstream r (next >-> AwaitUpstream g)
+(>->) :: (Monad m, Functor h) =>
+         AwaitUpstream f g m r
+      -> AwaitUpstream g h m (m (Active f g m r))
+      -> AwaitUpstream f h m r
+(>->) (AwaitUpstream f) (AwaitUpstream g) = AwaitUpstream $ \h -> do
+  fh <- f h
+  case fh of
+    RespondUpstream   r  next -> return (RespondUpstream r (next >-> AwaitUpstream g))
     RequestDownstream dfact   -> activateDowner dfact (AwaitUpstream g)
   
-activateUpper :: Functor h =>
-                 Active f g r
-              -> AwaitUpstream g h (Active f g r)
-              -> Active f h r
+activateUpper :: (Monad m, Functor h) =>
+                 Active f g m r
+              -> AwaitUpstream g h m (m (Active f g m r))
+              -> m (Active f h m r)
 activateUpper f g = case f of
-  RespondUpstream r await -> RespondUpstream r (await >-> g)
+  RespondUpstream r await -> return (RespondUpstream r (await >-> g))
   RequestDownstream fact  -> activateDowner fact g
 
-activateDowner :: Functor h =>
-                  g (Active f g r)
-               -> AwaitUpstream g h (Active f g r)
-               -> Active f h r
-activateDowner f (AwaitUpstream g) = case g f of
-  RespondUpstream r await -> activateUpper r await
-  RequestDownstream hact -> sendDownstream hact
+activateDowner :: (Monad m, Functor h) =>
+                  g (m (Active f g m r))
+               -> AwaitUpstream g h m (m (Active f g m r))
+               -> m (Active f h m r)
+activateDowner f (AwaitUpstream g) = do
+  gf <- g f
+  case gf of
+    RespondUpstream r await -> do
+      r' <- r
+      activateUpper r' await
+    RequestDownstream hact -> return (sendDownstream hact)
 
-sendDownstream :: Functor h =>
-                  h (Active g h (Active f g r))
-               -> Active f h r
-sendDownstream h = RequestDownstream $ flip fmap h $ \case
-  RespondUpstream r await  -> activateUpper r await
-  RequestDownstream dfact -> sendDownstream dfact
+sendDownstream :: (Monad m, Functor h) =>
+                  h (m (Active g h m (m (Active f g m r))))
+               -> Active f h m r
+sendDownstream h = RequestDownstream $ flip fmap h $ \h' -> do
+  h'' <- h'
+  case h'' of
+    RespondUpstream r await -> do
+      r' <- r
+      activateUpper r' await
+    RequestDownstream dfact -> return (sendDownstream dfact)
