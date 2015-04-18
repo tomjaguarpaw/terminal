@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Proxy where
 
 data Active uf df r = RespondUpstream   r (AwaitUpstream uf df r)
@@ -18,21 +20,19 @@ echo = AwaitUpstream (\(Same a f) -> RespondUpstream (f a) echo)
 (>->) (AwaitUpstream f) (AwaitUpstream g) = AwaitUpstream $ \h ->
   case f h of
     RespondUpstream   r  next -> RespondUpstream r (next >-> AwaitUpstream g)
-    RequestDownstream dfact   -> flut dfact (AwaitUpstream g)
+    RequestDownstream dfact   -> sendDownstream dfact (AwaitUpstream g)
   
-flit :: Functor h => Active f g r -> AwaitUpstream g h (Active f g r) -> Active f h r
-flit f g = case f of
+activateUpstream :: Functor h => Active f g r -> AwaitUpstream g h (Active f g r) -> Active f h r
+activateUpstream f g = case f of
   RespondUpstream r await -> RespondUpstream r (await >-> g)
-  RequestDownstream fact  -> flut fact g
+  RequestDownstream fact  -> sendDownstream fact g
 
-flut :: Functor h => g (Active f g r) -> AwaitUpstream g h (Active f g r) -> Active f h r
-flut f (AwaitUpstream g) = case g f of
-  RespondUpstream r await -> flit r await
-  RequestDownstream hact -> flat hact
+sendDownstream :: Functor h => g (Active f g r) -> AwaitUpstream g h (Active f g r) -> Active f h r
+sendDownstream f (AwaitUpstream g) = case g f of
+  RespondUpstream r await -> activateUpstream r await
+  RequestDownstream hact -> activateDownstream hact
 
-flat :: Functor h => h (Active g h (Active f g r)) -> Active f h r
-flat h = RequestDownstream $ flip fmap h
-         (\x -> case x of
-             RespondUpstream r await  -> flit r await
-             RequestDownstream dfact -> flat dfact
-         )
+activateDownstream :: Functor h => h (Active g h (Active f g r)) -> Active f h r
+activateDownstream h = RequestDownstream $ flip fmap h $ \case
+  RespondUpstream r await  -> activateUpstream r await
+  RequestDownstream dfact -> activateDownstream dfact
