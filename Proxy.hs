@@ -46,10 +46,10 @@ logger = Proxy $ \(Same a f) -> do
 count :: Monad m => Int -> Proxy (Socket a Int) NeverRequest m r
 count n = Proxy (\(Same _ f) -> return (RespondUpstream (f (n + 1)) (count (n + 1))))
 
-activateUpper :: (Monad m, Functor h) =>
-                 Active f g m r
-              -> Proxy g h m (m (Active f g m r))
-              -> m (Active f h m r)
+activateUpper :: (Monad m, Functor c) =>
+                 Active a b m r
+              -> Proxy b c m (m (Active a b m r))
+              -> m (Active a c m r)
 activateUpper f g@(Proxy gf) = case f of
   RespondUpstream r await -> return (RespondUpstream r (await >-> g))
   RequestDownstream fact  -> sendDownstream (gf fact)
