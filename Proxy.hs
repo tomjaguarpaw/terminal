@@ -28,28 +28,17 @@ activateUpper :: (Monad m, Functor h) =>
                  Active f g m r
               -> AwaitUpstream g h m (m (Active f g m r))
               -> m (Active f h m r)
-activateUpper f g = case f of
+activateUpper f g@(AwaitUpstream gf) = case f of
   RespondUpstream r await -> return (RespondUpstream r (await >-> g))
-  RequestDownstream fact  -> activateDowner fact g
-
-activateDowner :: (Monad m, Functor h) =>
-                  g (m (Active f g m r))
-               -> AwaitUpstream g h m (m (Active f g m r))
-               -> m (Active f h m r)
-activateDowner f (AwaitUpstream g) = jobber (g f)
+  RequestDownstream fact  -> sendDownstream (gf fact)
 
 sendDownstream :: (Monad m, Functor h) =>
-                  h (m (Active g h m (m (Active f g m r))))
-               -> Active f h m r
-sendDownstream = RequestDownstream . fmap jobber
-
-jobber :: (Monad m, Functor h) =>
-          m (Active g h m (m (Active f g m r)))
-          -> m (Active f h m r)
-jobber h' = do
+                  m (Active g h m (m (Active f g m r)))
+               -> m (Active f h m r)
+sendDownstream h' = do
   h'' <- h'
   case h'' of
     RespondUpstream r await -> do
       r' <- r
       activateUpper r' await
-    RequestDownstream dfact -> return (sendDownstream dfact)
+    RequestDownstream dfact -> return (RequestDownstream (fmap sendDownstream dfact))
