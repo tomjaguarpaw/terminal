@@ -36,18 +36,17 @@ activateDowner :: (Monad m, Functor h) =>
                   g (m (Active f g m r))
                -> AwaitUpstream g h m (m (Active f g m r))
                -> m (Active f h m r)
-activateDowner f (AwaitUpstream g) = do
-  gf <- g f
-  case gf of
-    RespondUpstream r await -> do
-      r' <- r
-      activateUpper r' await
-    RequestDownstream hact -> return (sendDownstream hact)
+activateDowner f (AwaitUpstream g) = jobber (g f)
 
 sendDownstream :: (Monad m, Functor h) =>
                   h (m (Active g h m (m (Active f g m r))))
                -> Active f h m r
-sendDownstream h = RequestDownstream $ flip fmap h $ \h' -> do
+sendDownstream = RequestDownstream . fmap jobber
+
+jobber :: (Monad m, Functor h) =>
+          m (Active g h m (m (Active f g m r)))
+          -> m (Active f h m r)
+jobber h' = do
   h'' <- h'
   case h'' of
     RespondUpstream r await -> do
