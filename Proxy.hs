@@ -20,11 +20,9 @@ echo = AwaitUpstream (\(Same a f) -> return (RespondUpstream (f a) echo))
          AwaitUpstream f g m r
       -> AwaitUpstream g h m (m (Active f g m r))
       -> AwaitUpstream f h m r
-(>->) (AwaitUpstream f) (AwaitUpstream g) = AwaitUpstream $ \h -> do
+(>->) (AwaitUpstream f) g = AwaitUpstream $ \h -> do
   fh <- f h
-  case fh of
-    RespondUpstream   r  next -> return (RespondUpstream r (next >-> AwaitUpstream g))
-    RequestDownstream dfact   -> activateDowner dfact (AwaitUpstream g)
+  activateUpper fh g
   
 activateUpper :: (Monad m, Functor h) =>
                  Active f g m r
