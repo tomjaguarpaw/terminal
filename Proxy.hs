@@ -13,7 +13,7 @@ identity :: (Monad m, Functor f) => Proxy f f m r
 identity = Proxy (\f -> return (RequestDownstream
                                 (fmap (\r -> return (RespondUpstream r identity)) f)))
 
-data Socket a b r = Same a (b -> r)
+data Simple a b r = Simple a (b -> r)
                   deriving Functor
 
 data NeverRespond r = NeverRespond
@@ -25,8 +25,8 @@ data NeverRequest a = NeverRequest !(NeverRequest a)
 absurd :: NeverRequest a -> b
 absurd (NeverRequest n) = absurd n
 
-echo :: Monad m => Proxy (Socket a a) f m r
-echo = Proxy (\(Same a f) -> return (RespondUpstream (f a) echo))
+echo :: Monad m => Proxy (Simple a a) f m r
+echo = Proxy (\(Simple a f) -> return (RespondUpstream (f a) echo))
 
 (>->) :: (Monad m, Functor c) =>
          Proxy a b m r
@@ -36,15 +36,15 @@ echo = Proxy (\(Same a f) -> return (RespondUpstream (f a) echo))
   fh <- f h
   activateUpper fh g
   
-logger :: (Show a, Show b) => Proxy (Socket a b) (Socket a b) IO r
-logger = Proxy $ \(Same a f) -> do
+logger :: (Show a, Show b) => Proxy (Simple a b) (Simple a b) IO r
+logger = Proxy $ \(Simple a f) -> do
   print ("Sending " ++ show a)
-  return (RequestDownstream (Same a (\b -> do
+  return (RequestDownstream (Simple a (\b -> do
                                         print ("Receiving " ++ show b)
                                         return (RespondUpstream (f b) logger))))
                                         
-count :: Monad m => Int -> Proxy (Socket a Int) NeverRequest m r
-count n = Proxy (\(Same _ f) -> return (RespondUpstream (f (n + 1)) (count (n + 1))))
+count :: Monad m => Int -> Proxy (Simple a Int) NeverRequest m r
+count n = Proxy (\(Simple _ f) -> return (RespondUpstream (f (n + 1)) (count (n + 1))))
 
 activateUpper :: (Monad m, Functor c) =>
                  Active a b m r
@@ -54,9 +54,9 @@ activateUpper f g@(Proxy gf) = case f of
   RespondUpstream r await -> return (RespondUpstream r (await >-> g))
   RequestDownstream fact  -> sendDownstream (gf fact)
 
-sendDownstream :: (Monad m, Functor h) =>
-                  m (Active g h m (m (Active f g m r)))
-               -> m (Active f h m r)
+sendDownstream :: (Monad m, Functor c) =>
+                  m (Active b c m (m (Active a b m r)))
+               -> m (Active a c m r)
 sendDownstream h' = do
   h'' <- h'
   case h'' of
@@ -65,7 +65,7 @@ sendDownstream h' = do
       activateUpper r' await
     RequestDownstream dfact -> return (RequestDownstream (fmap sendDownstream dfact))
 
-foo :: Show a => Proxy (Socket a Int) NeverRequest IO r
+foo :: Show a => Proxy (Simple a Int) NeverRequest IO r
 foo = logger >-> logger >-> count 0
 
 iter :: Monad m =>
@@ -79,11 +79,11 @@ iter a (Proxy f) = do
     RespondUpstream r next -> return (r, next)
 
 main = do
-  (r, foo) <- iter (Same 10 id) foo
+  (r, foo) <- iter (Simple 10 id) foo
   print r
-  (r, foo) <- iter (Same 20 id) foo
+  (r, foo) <- iter (Simple 20 id) foo
   print r
-  (r, foo) <- iter (Same 30 id) foo
+  (r, foo) <- iter (Simple 30 id) foo
   print r
 
   
