@@ -6,6 +6,7 @@ module Proxy where
 
 data Active uf df m r = RespondUpstream   r (Proxy uf df m r)
                       | RequestDownstream (df (m (Active uf df m r)))
+                      | M (m (Active uf df m r))
 
 data Proxy uf df m r = Proxy (uf r -> m (Active uf df m r))
 
@@ -53,6 +54,9 @@ activateUpper :: (Monad m, Functor c) =>
 activateUpper f g@(Proxy gf) = case f of
   RespondUpstream r await -> return (RespondUpstream r (await >-> g))
   RequestDownstream fact  -> sendDownstream (gf fact)
+  M m                     -> do
+    f' <- m
+    activateUpper f' g
 
 sendDownstream :: (Monad m, Functor c) =>
                   m (Active b c m (m (Active a b m r)))
@@ -64,6 +68,7 @@ sendDownstream h' = do
       r' <- r
       activateUpper r' await
     RequestDownstream dfact -> return (RequestDownstream (fmap sendDownstream dfact))
+    M m                     -> sendDownstream m
 
 foo :: Show a => Proxy (Simple a Int) NeverRequest IO r
 foo = logger >-> logger >-> count 0
@@ -74,9 +79,15 @@ iter :: Monad m =>
      -> m (r, Proxy f NeverRequest m r)
 iter a (Proxy f) = do
   fa <- f a
-  case fa of
+  iterActive fa
+
+iterActive :: Monad m =>
+              Active t NeverRequest m r
+           -> m (r, Proxy t NeverRequest m r)
+iterActive fa = case fa of
     RequestDownstream n    -> absurd n
     RespondUpstream r next -> return (r, next)
+    M m                    -> m >>= iterActive
 
 main = do
   (r, foo) <- iter (Simple 10 id) foo
