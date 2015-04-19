@@ -5,14 +5,14 @@
 module Proxy where
 
 data Active uf df m r = RespondUpstream   r (Proxy uf df m r)
-                      | RequestDownstream (df (m (Active uf df m r)))
+                      | RequestDownstream (df (Active uf df m r))
                       | M (m (Active uf df m r))
 
-data Proxy uf df m r = Proxy (uf r -> m (Active uf df m r))
+data Proxy uf df m r = Proxy (uf r -> Active uf df m r)
 
 identity :: (Monad m, Functor f) => Proxy f f m r
-identity = Proxy (\f -> return (RequestDownstream
-                                (fmap (\r -> return (RespondUpstream r identity)) f)))
+identity = Proxy (\f -> (RequestDownstream
+                         (fmap (\r -> (RespondUpstream r identity)) f)))
 
 data Simple a b r = Simple a (b -> r)
                   deriving Functor
@@ -27,29 +27,27 @@ absurd :: NeverRequest a -> b
 absurd (NeverRequest n) = absurd n
 
 echo :: Monad m => Proxy (Simple a a) f m r
-echo = Proxy (\(Simple a f) -> return (RespondUpstream (f a) echo))
+echo = Proxy (\(Simple a f) -> RespondUpstream (f a) echo)
 
 (>->) :: (Monad m, Functor c) =>
          Proxy a b m r
-      -> Proxy b c m (m (Active a b m r))
+      -> Proxy b c m (Active a b m r)
       -> Proxy a c m r
-(>->) (Proxy f) g = Proxy $ \h -> do
-  fh <- f h
-  activateUpper fh g
+(>->) (Proxy f) g = Proxy $ \h -> M (activateUpper (f h) g)
   
 logger :: (Show a, Show b) => Proxy (Simple a b) (Simple a b) IO r
-logger = Proxy $ \(Simple a f) -> do
+logger = Proxy $ \(Simple a f) -> M $ do
   print ("Sending " ++ show a)
-  return (RequestDownstream (Simple a (\b -> do
+  return (RequestDownstream (Simple a (\b -> M $ do
                                         print ("Receiving " ++ show b)
                                         return (RespondUpstream (f b) logger))))
                                         
 count :: Monad m => Int -> Proxy (Simple a Int) NeverRequest m r
-count n = Proxy (\(Simple _ f) -> return (RespondUpstream (f (n + 1)) (count (n + 1))))
+count n = Proxy (\(Simple _ f) -> (RespondUpstream (f (n + 1)) (count (n + 1))))
 
 activateUpper :: (Monad m, Functor c) =>
                  Active a b m r
-              -> Proxy b c m (m (Active a b m r))
+              -> Proxy b c m (Active a b m r)
               -> m (Active a c m r)
 activateUpper f g@(Proxy gf) = case f of
   RespondUpstream r await -> return (RespondUpstream r (await >-> g))
@@ -59,16 +57,13 @@ activateUpper f g@(Proxy gf) = case f of
     activateUpper f' g
 
 sendDownstream :: (Monad m, Functor c) =>
-                  m (Active b c m (m (Active a b m r)))
+                  (Active b c m (Active a b m r))
                -> m (Active a c m r)
 sendDownstream h' = do
-  h'' <- h'
-  case h'' of
-    RespondUpstream r await -> do
-      r' <- r
-      activateUpper r' await
-    RequestDownstream dfact -> return (RequestDownstream (fmap sendDownstream dfact))
-    M m                     -> sendDownstream m
+  case h' of
+    RespondUpstream r await -> activateUpper r await
+    RequestDownstream dfact -> return (RequestDownstream (fmap (M . sendDownstream) dfact))
+    M m                     -> m >>= sendDownstream
 
 foo :: Show a => Proxy (Simple a Int) NeverRequest IO r
 foo = logger >-> logger >-> count 0
@@ -77,9 +72,7 @@ iter :: Monad m =>
         f r
      -> Proxy f NeverRequest m r
      -> m (r, Proxy f NeverRequest m r)
-iter a (Proxy f) = do
-  fa <- f a
-  iterActive fa
+iter a (Proxy f) = iterActive (f a)
 
 iterActive :: Monad m =>
               Active t NeverRequest m r
